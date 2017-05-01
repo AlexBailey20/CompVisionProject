@@ -3,7 +3,6 @@ import keras
 import numpy
 import scipy
 from scipy.ndimage.filters import gaussian_filter
-from scipy.misc import imresize
 import os
 from PIL import Image
 import glob
@@ -25,7 +24,7 @@ def get_inputs():
         image=Image.open(file)
         image_y = scipy.ndimage.gaussian_filter(image, sigma = 0.5)
         image_y = image.resize((224,148))
-        image_y = image.resize((896,592), Image.BICUBIC)
+        image_y = image_y.resize((896,592), Image.BICUBIC)
         X.append(numpy.array(image))
         Y.append(numpy.array(image_y))
     X = numpy.array(X)
@@ -37,14 +36,12 @@ def get_inputs():
     return X,Y
         
 Y_train,X_train = get_inputs()
-
 init = Input(shape=(592,896,3))
 x = Conv2D(64,(9,9),activation='relu', padding='same')(init)
 x = Conv2D(32,(1,1),activation='relu', padding='same')(x)
-out = Conv2D(1, (5,5))(x)
+out = Conv2D(3, (5,5), padding='same')(x)
 model = Model(init, out)
 model.compile(loss='mse',
               optimizer=keras.optimizers.Adadelta(),
               metrics=[peak_signal_to_noise_ratio])
-
 model.fit(x=X_train, y = Y_train, batch_size=batch_size, epochs=1, verbose=1)
