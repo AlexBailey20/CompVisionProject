@@ -1,0 +1,7 @@
+
+models/__pycache__/*
+generator
+discriminator
+*.jpg
+*.png
+*.weights
