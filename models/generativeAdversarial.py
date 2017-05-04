@@ -3,7 +3,9 @@ import math
 import matplotlib.pyplot as plt
 
 from PIL import Image
+from keras import backend as tf
 from keras.models import Sequential
+from keras.constraints import maxnorm
 from keras.optimizers import SGD, Adam, RMSprop
 from keras.layers.normalization import BatchNormalization
 from keras.layers.core import Flatten, Dense, Reshape, Activation, Dropout
@@ -28,27 +30,27 @@ class GAN_Model(object):
         #Input: 100 floats
         #   :   16x16x3 floats
         #Output: 256x256x3 floats
-        dense_n = 4
+        dense_n = 8
         model = Sequential()
         model.add(Dense(dense_n*dense_n*3, input_shape=self.generator_input_shape))
         model.add(BatchNormalization(momentum=self.momentum))
         model.add(Activation('relu'))
         model.add(Reshape((dense_n, dense_n, 3)))
         model.add(Dropout(self.dropout))
-        model.add(UpSampling2D(4))
-        model.add(Conv2DTranspose(512, 5, padding='same'))
+        model.add(UpSampling2D(2))
+        model.add(Conv2DTranspose(512, 6, padding='same'))
         model.add(BatchNormalization(momentum=self.momentum))
         model.add(Activation('relu'))
         model.add(UpSampling2D(4))
-        model.add(Conv2DTranspose(256, 5, padding='same'))
+        model.add(Conv2DTranspose(256, 6, padding='same'))
         model.add(BatchNormalization(momentum=self.momentum))
         model.add(Activation('relu'))
         model.add(UpSampling2D(2))
-        model.add(Conv2DTranspose(128, 5, padding='same'))
+        model.add(Conv2DTranspose(128, 6, padding='same'))
         model.add(BatchNormalization(momentum=self.momentum))
         model.add(Activation('relu'))
         model.add(UpSampling2D(2))
-        model.add(Conv2DTranspose(3, 5, padding='same'))
+        model.add(Conv2DTranspose(3, 6, padding='same'))
         model.add(Activation('sigmoid'))
         return model
 
@@ -56,20 +58,21 @@ class GAN_Model(object):
         #Input: 256x256x3 floats
         #Output: {0,1}
         model = Sequential()
-        model.add(Conv2D(64, 6, strides=4, padding='same', input_shape=self.discriminator_input_shape))
+        model.add(Conv2D(128, 5, strides=2, padding='same', input_shape=self.discriminator_input_shape))
         model.add(LeakyReLU(self.relu_alpha))
         model.add(Dropout(self.dropout))
-        model.add(Conv2D(128, 6, strides=4, padding='same'))
+        model.add(Conv2D(128, 5, strides=4, padding='same'))
         model.add(LeakyReLU(self.relu_alpha))
         model.add(Dropout(self.dropout))
-        model.add(Conv2D(128, 5, strides=2, padding='same'))
+        model.add(Conv2D(256, 5, strides=4, padding='same'))
         model.add(LeakyReLU(self.relu_alpha))
         model.add(Dropout(self.dropout))
-        model.add(Conv2D(256, 4, strides=2, padding='same'))
+        model.add(Conv2D(384, 5, strides=2, padding='same'))
         model.add(LeakyReLU(self.relu_alpha))
         model.add(Dropout(self.dropout))
         model.add(Flatten())
-        model.add(Dense(1, activation='sigmoid'))
+        model.add(Dense(1))
+
         return model
 
     def adversarial_model(self):
@@ -111,14 +114,15 @@ class GAN_Model(object):
                     header_text = "\t\tDiscriminator Loss\t\tGenerator Loss" if e==0 else ""
                     print("\nEpoch\t{}{}".format(e, header_text))
                     for b in range(int(self.num_images/self.batch_size)):
-                        #collect real and generated images
-                        image_batch = self.images[np.random.randint(0, self.num_images, size=self.batch_size)]
-                        generated_images = self.generator.predict_on_batch(self.random_noise())
-                        X = np.concatenate((image_batch, generated_images))
-                        y = np.ones([2*self.batch_size])
-                        y[self.batch_size:] = 0
-                        #train discriminator to recognize which images are generated
-                        d_loss = self.discriminator.train_on_batch(X, y)
+                        for _ in range(5):
+                            #collect real and generated images
+                            image_batch = self.images[np.random.randint(0, self.num_images, size=self.batch_size)]
+                            generated_images = self.generator.predict_on_batch(self.random_noise())
+                            X = np.concatenate((image_batch, generated_images))
+                            y = np.ones([2*self.batch_size])
+                            y[self.batch_size:] = 0
+                            #train discriminator to recognize which images are generated
+                            d_loss = self.discriminator.train_on_batch(X, y)
                         #train generator to fool discriminator on generated images
                         y = np.ones([self.batch_size])
                         g_loss = self.adversarial.train_on_batch(self.random_noise(), y)
@@ -149,8 +153,9 @@ class GAN_Model(object):
         #generate and save images
         generated_images = self.generator.predict_on_batch(noise)
         save_generated_images(generated_images)
+        print("Generated {} samples.".format(num_samples))
 
-    def __init__(self, images=None, batch_size=35, dropout=0.46, relu_alpha=0.2, momentum=0.9, random_values=100):
+    def __init__(self, images=None, batch_size=35, dropout=0.3, relu_alpha=0.15, momentum=0.9, random_values=100):
         self.random_values = random_values
         self.generator_input_shape = (self.random_values,)
         self.batch_size = batch_size
@@ -166,8 +171,8 @@ class GAN_Model(object):
 
         #tunable model parameters
         self.default_epochs = 200
-        self.generator_opt = RMSprop(lr=0.00005, clipvalue=1.0, decay=2e-9)
-        self.discriminator_opt = RMSprop(lr=0.000072, clipvalue=1.0, decay=4e-9)
+        self.generator_opt = RMSprop(lr=0.00005)
+        self.discriminator_opt = RMSprop(lr=0.00005, clipvalue=0.01)
         self.dropout = dropout
         self.relu_alpha = relu_alpha
         self.momentum = momentum
@@ -178,5 +183,7 @@ class GAN_Model(object):
         self.adversarial = self.adversarial_model()
 
         #compile models
-        self.discriminator.compile(loss='binary_crossentropy', optimizer=self.discriminator_opt)
-        self.adversarial.compile(loss='binary_crossentropy', optimizer=self.generator_opt)
+        wasserstein_discriminator_loss = lambda true, pred: tf.abs(tf.mean(pred)-tf.mean(true))
+        wasserstein_adversary_loss = lambda true, pred: tf.abs(tf.mean(pred))
+        self.discriminator.compile(loss='mean_absolute_error', optimizer=self.discriminator_opt)
+        self.adversarial.compile(loss=wasserstein_adversary_loss, optimizer=self.generator_opt)
