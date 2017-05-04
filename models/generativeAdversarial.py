@@ -1,117 +1,152 @@
 import numpy as np
 import math
+import matplotlib.pyplot as plt
 
 from PIL import Image
+from keras import backend as tf
 from keras.models import Sequential
-from keras.optimizers import SGD
+from keras.optimizers import SGD, Adam, RMSprop
 from keras.layers.normalization import BatchNormalization
-from keras.layers.core import Flatten, Dense, Reshape, Activation
-from keras.layers.convolutional import Conv2D, Conv2DTranspose, UpSampling1D
-from keras.layers.pooling import MaxPooling2D
+from keras.layers.core import Flatten, Dense, Reshape, Activation, Dropout
+from keras.layers.advanced_activations import LeakyReLU
+from keras.layers.convolutional import Conv2D, Conv2DTranspose, UpSampling2D
 
 class GAN_ISR_Model(object):
-    #TODO Reference http://arxiv.org/abs/1511.06434 and implement proposed changes
-    # these include different activations for generation and different pooling/convolution operations
+    #inspired mostly by https://medium.com/towards-data-science/gan-by-example-using-keras-on-tensorflow-backend-1a6d515a60d0
     def generator_model(self):
-        #Input: 48 floats
-        #Output: 512x512x3 floats
+        #Input: 192 floats
+        #   :   8x8x3 floats
+        #Output: 256x256x3 floats
         model = Sequential()
-        model.add(Reshape((4, 4, 3), input_shape=self.noise_shape))
-        model.add(Conv2DTranspose(32, kernel_size=6, strides=4, padding='same', activation='relu'))
-        model.add(Conv2DTranspose(32, kernel_size=6, strides=4, padding='same', activation='relu'))
-        model.add(Conv2DTranspose(32, kernel_size=5, strides=4, padding='same', activation='relu'))
-        model.add(Conv2DTranspose(3, kernel_size=5, strides=2, padding='same', activation='relu'))
+        model.add(Dense(8*8*3, input_shape=self.generator_input_shape))
+        model.add(BatchNormalization(momentum=self.momentum))
+        model.add(Activation('relu'))
+        model.add(Reshape((8, 8, 3)))
+        model.add(Dropout(self.dropout))
+        model.add(UpSampling2D(2))
+        model.add(Conv2DTranspose(512, kernel_size=4, padding='same', kernel_initializer='glorot_normal'))
+        model.add(BatchNormalization(momentum=self.momentum))
+        model.add(Activation('relu'))
+        model.add(UpSampling2D(4))
+        model.add(Conv2DTranspose(256, kernel_size=5, padding='same', kernel_initializer='glorot_normal'))
+        model.add(BatchNormalization(momentum=self.momentum))
+        model.add(Activation('relu'))
+        model.add(UpSampling2D(2))
+        model.add(Conv2DTranspose(128, kernel_size=4, padding='same', kernel_initializer='glorot_normal'))
+        model.add(BatchNormalization(momentum=self.momentum))
+        model.add(Activation('relu'))
+        model.add(UpSampling2D(2))
+        #should you use strided convolutions here instead? need to investigate
+        model.add(Conv2DTranspose(3, kernel_size=4, padding='same', kernel_initializer='glorot_normal'))
+        model.add(Activation('sigmoid'))
         return model
 
     def discriminator_model(self):
-        #Input: 512x512x3 floats
+        #Input: 256x256x3 floats
         #Output: {0,1}
         model = Sequential()
-        model.add(Conv2D(32, kernel_size=5, strides=4, padding='same', activation='relu', input_shape=self.image_shape))
-        model.add(Conv2D(32, kernel_size=5, strides=4, padding='same', activation='relu'))
-        model.add(Conv2D(32, kernel_size=5, strides=4, padding='same', activation='relu'))
-        model.add(Conv2D(32, kernel_size=5, strides=2, padding='same', activation='relu'))
+        model.add(Conv2D(32, kernel_size=5, strides=4, padding='same', input_shape=self.discriminator_input_shape))
+        model.add(LeakyReLU(self.relu_alpha))
+        model.add(Dropout(self.dropout))
+        model.add(Conv2D(64, kernel_size=5, strides=4, padding='same'))
+        model.add(LeakyReLU(self.relu_alpha))
+        model.add(Dropout(self.dropout))
+        model.add(Conv2D(128, kernel_size=4, strides=2, padding='same'))
+        model.add(LeakyReLU(self.relu_alpha))
+        model.add(Dropout(self.dropout))
+        model.add(Conv2D(256, kernel_size=3, strides=2, padding='same'))
+        model.add(LeakyReLU(self.relu_alpha))
+        model.add(Dropout(self.dropout))
         model.add(Flatten())
         model.add(Dense(1, activation='sigmoid'))
         return model
 
     @staticmethod
     def gen_dis_model(generator, discriminator):
+        #Input: 192 floats
+        #Output: {0,1}
         model = Sequential()
         model.add(generator)
-        discriminator.trainable = False
         model.add(discriminator)
         return model
 
+    def random_noise(self):
+        #create just the right amount of random noise for generation
+        return np.random.uniform(-1, 1, self.noise_shape)
+
     def train(self):
+        #TODO better saving image behavior; need to keep track of past epochs
+        def save_generated_images(gen_images):
+            for num, image in enumerate(gen_images):
+                plt.imshow(image)
+                plt.savefig("generated_image_{}.png".format(num))
+        #instantiate models
         generator = self.generator_model()
         discriminator = self.discriminator_model()
-        generator_discriminator = GAN_ISR_Model.gen_dis_model(generator, discriminator)
-        g_optimizer = SGD(lr=0.0005, momentum=0.9, nesterov=True)
-        d_optimizer = SGD(lr=0.0005, momentum=0.9, nesterov=True)
-        generator.compile(loss='binary_crossentropy', optimizer='sgd')
-        generator_discriminator.compile(loss='binary_crossentropy', optimizer=g_optimizer)
-        discriminator.trainable = True
-        discriminator.compile(loss='binary_crossentropy', optimizer=d_optimizer)
-
-        noise = np.zeros((self.batch_size, self.random_values))
-        def randomize(noise):
-            noise = np.random.uniform(-1, 1, noise.shape)
-
-        num_batches = int(len(self.orig_images)/self.batch_size)
-        for epoch in range(self.epochs):
-            print("Epoch: {}".format(epoch+1))
-            for batch in range(num_batches):
-                #make some noise, use that to make some images
-                randomize(noise)
-                image_batch = self.orig_images[batch*self.batch_size:(batch+1)*self.batch_size]
-                generated_images = generator.predict(noise, verbose=0)
-                #save a few images so we can track progress DEBUG
-                if (batch) % self.batch_size == 0:
-                    image = generated_images[0] #GAN_ISR_Model.combine_images(generated_images)
-                    image = image*127.5+127.5
-                    Image.fromarray(image.astype(np.uint8)).save("generated_image_{}.png".format(batch))
-                #TODO rewrite loss calculation
-                #teach discriminator what real images look like compared to the fakes we made
+        adversarial = GAN_ISR_Model.gen_dis_model(generator, discriminator)
+        #assign loss and optimizers
+        discriminator.compile(loss='binary_crossentropy', optimizer=self.dis_opt)
+        adversarial.compile(loss='binary_crossentropy', optimizer=self.gen_opt)
+        #pre-train discriminator
+        image_batch = self.images[:self.batch_size]
+        generated_images = generator.predict(self.random_noise(), verbose=0)
+        X = np.concatenate((image_batch, generated_images))
+        y = np.zeros([self.batch_size*2])
+        y[:self.batch_size] = 1
+        discriminator.fit(X, y, batch_size=self.batch_size, verbose=0)
+        y_hat = discriminator.predict(X)
+        #train for multiple epochs
+        def train(epochs=5):
+            for e in range(epochs+1):
+                #collect real and generated images
+                image_batch = self.images[np.random.randint(0, self.images.shape[0], size=self.batch_size),:,:,:]
+                generated_images = generator.predict(self.random_noise(), verbose=0)
                 X = np.concatenate((image_batch, generated_images))
-                y = [1]*self.batch_size + [0]*self.batch_size
-                discriminator_loss = discriminator.train_on_batch(X, y)
-                #make some noise, use that to train our conjoined model to generate better fakes
-                randomize(noise)
-                discriminator.trainable = False
-                generator_loss = generator_discriminator.train_on_batch(noise, [1]*self.batch_size)
-                discriminator.trainable = True
-                ##
-                if batch % self.batch_size == 9:
-                    generator.save_weights('generator.weights', True)
-                    discriminator.save_weights('discriminator.weights', True)
+                y = np.ones([2*self.batch_size])
+                y[self.batch_size:] = 0
+                #train discriminator to recognize which images are generated
+                d_loss = discriminator.train_on_batch(X, y)
+                #train generator to fool discriminator on generated images
+                y = np.ones([self.batch_size])
+                g_loss = adversarial.train_on_batch(self.random_noise(), y)
+                #print losses and save weights/images
+                if e % 5 == 0:
+                    print("Epoch\t{}\t\tD:{}\t\tG:{}".format(e, d_loss, g_loss))
+                    if e % 10 == 0:
+                        save_generated_images(generated_images)
+                        generator.save_weights('generator.weights', True)
+                        discriminator.save_weights('discriminator.weights', True)
+        train(self.epochs)
 
     def generate(self, with_discriminator=False):
         #TODO write generation code
         generator = self.generator_model()
-        generator.compile(loss='binary_crossentropy', optimizer='SGD')
-        generator.load_weights('generator')
+        generator.compile(loss='binary_crossentropy', optimizer=self.gen_opt)
+        generator.load_weights('generator.weights')
         if with_discriminator:
             #TODO
             pass
         else:
-            noise = np.zeros((self.batch_size, self.noise_shape))
-            for i in range(self.batch_size):
-                noise[i, :] = np.random.uniform(-1, 1, self.noise_shape)
-            generated_images = generator.predict(noise, verbose=1)
+            generated_images = generator.predict(self.random_noise(), verbose=1)
+            img = generated_images[0]
+            #TODO
             pass
-            # image = GAN_ISR_Model.combine_images(generated_images)
-        #https://github.com/jacobgil/keras-dcgan/blob/master/dcgan.py
-        #image = image*127.5+127.5
-        #Image.fromarray(image.astype(np.uint8)).save("generated_image.png")
 
 
-    def __init__(self, orig, small, batch_size=10, epochs=5):
-        self.orig_images = orig
-        self.small_images = small
-        print("Loaded {} images into GAN ISR model".format(len(orig)))
-        self.image_shape = orig[0].shape
-        self.random_values = 48
-        self.noise_shape = (self.random_values,)
+    def __init__(self, images, batch_size=20, epochs=30, dropout=0.3, relu_alpha=0.2, momentum=0.9):
+        #TODO clean up, simplify where possible
+        self.images = np.asarray(images)
+        print("Loaded {} images into GAN ISR model".format(len(self.images)))
+        self.random_values = 100
         self.batch_size = batch_size
+        self.generator_input_shape = (self.random_values,)
+        self.discriminator_input_shape = (self.images[0].shape)
+        self.noise_shape = (self.batch_size, self.random_values)
+
+        #tunable model parameters
         self.epochs = epochs
+        self.gen_opt = RMSprop(lr=0.0004, clipvalue=1.0, decay=3e-8)
+        self.dis_opt = RMSprop(lr=0.0008, clipvalue=1.0, decay=6e-8)
+        self.dropout = dropout
+        self.relu_alpha = relu_alpha
+        self.momentum = momentum
