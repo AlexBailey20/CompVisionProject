@@ -1,3 +1,5 @@
+# Shishir Tandale
+
 import numpy as np
 import math
 import matplotlib.pyplot as plt
@@ -19,38 +21,53 @@ def save_generated_images(gen_images, title="generated_image", limit=None):
     if len(gen_images) > 1:
         for num, image in enumerate(gen_images):
             plt.imshow(image)
-            plt.savefig("{}_{}.png".format(title, num))
+            plt.savefig("images/gan/{}_{:03d}.png".format(title, num))
     else:
         plt.imshow(gen_images[0])
-        plt.savefig("{}.png".format(title))
+        plt.savefig("images/gan/{}.png".format(title))
+
+class model_guard(object):
+    #protects a model's parameters from changing during training
+    #use in a with statement, passing the model you want to protect temporarily
+    #used in GAN
+    def __init__(self, model):
+        self.model = model
+    def __enter__(self):
+        self.model.trainable = False
+        for layer in self.model.layers:
+            layer.trainable = False
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.model.trainable = True
+        for layer in self.model.layers:
+            layer.trainable = True
 
 class GAN_Model(object):
     #inspired mostly by https://medium.com/towards-data-science/gan-by-example-using-keras-on-tensorflow-backend-1a6d515a60d0
     def generator_model(self):
-        #Input: 100 floats
-        #   :   16x16x3 floats
+        #Input: 64 floats
         #Output: 256x256x3 floats
-        dense_n = 8
         model = Sequential()
-        model.add(Dense(dense_n*dense_n*3, input_shape=self.generator_input_shape))
+        model.add(Reshape((8, 8, 1), input_shape=self.generator_input_shape))
         model.add(BatchNormalization(momentum=self.momentum))
-        model.add(Activation('relu'))
-        model.add(Reshape((dense_n, dense_n, 3)))
         model.add(Dropout(self.dropout))
         model.add(UpSampling2D(2))
-        model.add(Conv2DTranspose(512, 6, padding='same'))
-        model.add(BatchNormalization(momentum=self.momentum))
-        model.add(Activation('relu'))
-        model.add(UpSampling2D(4))
-        model.add(Conv2DTranspose(256, 6, padding='same'))
+        model.add(Conv2DTranspose(self.filter_dim, 6, padding='same'))
         model.add(BatchNormalization(momentum=self.momentum))
         model.add(Activation('relu'))
         model.add(UpSampling2D(2))
-        model.add(Conv2DTranspose(128, 6, padding='same'))
+        model.add(Conv2DTranspose(self.filter_dim*2, 6, padding='same'))
         model.add(BatchNormalization(momentum=self.momentum))
         model.add(Activation('relu'))
         model.add(UpSampling2D(2))
-        model.add(Conv2DTranspose(3, 6, padding='same'))
+        model.add(Conv2DTranspose(self.filter_dim*4, 6, padding='same'))
+        model.add(BatchNormalization(momentum=self.momentum))
+        model.add(Activation('relu'))
+        model.add(UpSampling2D(2))
+        model.add(Conv2DTranspose(self.filter_dim*8, 6, padding='same'))
+        model.add(BatchNormalization(momentum=self.momentum))
+        model.add(Activation('relu'))
+        model.add(UpSampling2D(2))
+        model.add(Conv2DTranspose(3, 3, padding='same'))
         model.add(Activation('sigmoid'))
         return model
 
@@ -58,21 +75,20 @@ class GAN_Model(object):
         #Input: 256x256x3 floats
         #Output: {0,1}
         model = Sequential()
-        model.add(Conv2D(128, 5, strides=2, padding='same', input_shape=self.discriminator_input_shape))
+        model.add(Conv2D(self.filter_dim*8, 4, padding='same', input_shape=self.discriminator_input_shape))
         model.add(LeakyReLU(self.relu_alpha))
         model.add(Dropout(self.dropout))
-        model.add(Conv2D(128, 5, strides=4, padding='same'))
+        model.add(Conv2D(self.filter_dim*4, 6, strides=4, padding='same'))
         model.add(LeakyReLU(self.relu_alpha))
         model.add(Dropout(self.dropout))
-        model.add(Conv2D(256, 5, strides=4, padding='same'))
+        model.add(Conv2D(self.filter_dim*2, 6, strides=4, padding='same'))
         model.add(LeakyReLU(self.relu_alpha))
         model.add(Dropout(self.dropout))
-        model.add(Conv2D(384, 5, strides=2, padding='same'))
+        model.add(Conv2D(self.filter_dim, 6, strides=4, padding='same'))
         model.add(LeakyReLU(self.relu_alpha))
         model.add(Dropout(self.dropout))
         model.add(Flatten())
         model.add(Dense(1))
-
         return model
 
     def adversarial_model(self):
@@ -94,48 +110,49 @@ class GAN_Model(object):
             return
 
         if resume:
-            self.generator.load_weights('generator.weights', True)
-            self.discriminator.load_weights('discriminator.weights', True)
+            self.generator.load_weights(self.gen_savefilename)
+            self.discriminator.load_weights(self.dis_savefilename)
             print("Loaded weights, resuming training.")
 
         #pre-train discriminator
-        image_batch = self.images[:self.batch_size]
+        random_range = lambda start=0, end=self.num_images, count=self.batch_size: np.random.randint(start, end, size=count)
+        image_batch = self.images[random_range()]
         generated_images = self.generator.predict_on_batch(self.random_noise())
         X = np.concatenate((image_batch, generated_images))
-        y = np.zeros([self.batch_size*2])
-        y[:self.batch_size] = 1
-        self.discriminator.train_on_batch(X, y)
+        ones = np.ones([self.batch_size])
+        ones_zeros = np.append(ones, (np.zeros([self.batch_size])))
+        _ = self.discriminator.fit(X, ones_zeros, batch_size=self.batch_size, verbose=0)
 
         #train for multiple epochs
         def train(epochs):
             generated_images = None #reference for saving results of each epoch
             try:
-                for e in range(epochs):
-                    header_text = "\t\tDiscriminator Loss\t\tGenerator Loss" if e==0 else ""
-                    print("\nEpoch\t{}{}".format(e, header_text))
-                    for b in range(int(self.num_images/self.batch_size)):
+                for e in range(1, epochs+1):
+                    header_text = "{}\t\t\t{}".format("Discriminator","Generator") if e==1 else ""
+                    print("{}\t{}\t\t{}".format("Epoch", e, header_text))
+                    for b in range(self.num_batches):
+                        #in wasserstein you train discriminator n times for each generator update
                         for _ in range(5):
                             #collect real and generated images
-                            image_batch = self.images[np.random.randint(0, self.num_images, size=self.batch_size)]
+                            image_batch = self.images[random_range()]
                             generated_images = self.generator.predict_on_batch(self.random_noise())
                             X = np.concatenate((image_batch, generated_images))
-                            y = np.ones([2*self.batch_size])
-                            y[self.batch_size:] = 0
                             #train discriminator to recognize which images are generated
-                            d_loss = self.discriminator.train_on_batch(X, y)
+                            d_loss = self.discriminator.fit(X, ones_zeros, batch_size=self.batch_size, verbose=0)
                         #train generator to fool discriminator on generated images
-                        y = np.ones([self.batch_size])
-                        g_loss = self.adversarial.train_on_batch(self.random_noise(), y)
+                        #but be careful not to modify discriminator parameters
+                        with model_guard(self.discriminator):
+                            g_loss = self.adversarial.train_on_batch(self.random_noise(), ones)
                         #print losses and save weights/images
                         if b % 5 == 0:
-                            batch_text = "Batch\t" if b==0 else "\t"
-                            print("{}{}\t\t{}\t\t{}".format(batch_text, b, d_loss, g_loss))
-                    save_generated_images(generated_images, title="epoch_{}".format(e), limit=1)
+                            batch_text = "Batch" if b==0 else ""
+                            print("{}\t{}\t\t{}\t\t{}".format(batch_text, b, d_loss.history['loss'][-1], g_loss))
+                    save_generated_images(generated_images, title="epoch_{:02d}".format(e), limit=1)
             except KeyboardInterrupt:
-                print("User stopped training.")
+                print("\nUser stopped training.")
             finally:
-                self.generator.save_weights('generator.weights', True)
-                self.discriminator.save_weights('discriminator.weights', True)
+                self.generator.save_weights(self.gen_savefilename)
+                self.discriminator.save_weights(self.dis_savefilename)
         train(epochs)
 
     def generate(self, num_samples=None, with_discriminator=False):
@@ -144,10 +161,10 @@ class GAN_Model(object):
         #make some noise
         noise = self.random_noise(num=num_samples)
         #load generator weights
-        self.generator.load_weights('generator.weights', True)
+        self.generator.load_weights(self.gen_savefilename)
         if with_discriminator:
             #run this batch through the adversarial and update weights
-            self.discriminator.load_weights('discriminator.weights', True)
+            self.discriminator.load_weights(self.dis_savefilename)
             g_loss = self.adversarial.train_on_batch(noise, np.ones([num_samples]))
             print("Discriminator yielded loss {}".format(g_loss))
         #generate and save images
@@ -155,14 +172,15 @@ class GAN_Model(object):
         save_generated_images(generated_images)
         print("Generated {} samples.".format(num_samples))
 
-    def __init__(self, images=None, batch_size=35, dropout=0.3, relu_alpha=0.15, momentum=0.9, random_values=100):
-        self.random_values = random_values
+    def __init__(self, images=None, batch_size=20, dropout=0.3, relu_alpha=0.15, momentum=0.9):
+        self.random_values = 64
         self.generator_input_shape = (self.random_values,)
         self.batch_size = batch_size
         self.noise_shape = (self.batch_size, self.random_values)
         if images is not None:
             self.images = np.asarray(images)
             self.num_images = len(images)
+            self.num_batches = int(self.num_images/self.batch_size)
             print("Loaded {} images into GAN.".format(len(self.images)))
             self.discriminator_input_shape = (self.images[0].shape)
         else:
@@ -170,20 +188,22 @@ class GAN_Model(object):
             self.discriminator_input_shape = (256,256,3) #required for model specification
 
         #tunable model parameters
-        self.default_epochs = 200
-        self.generator_opt = RMSprop(lr=0.00005)
-        self.discriminator_opt = RMSprop(lr=0.00005, clipvalue=0.01)
+        self.filter_dim = 16
+        self.gen_savefilename = 'generator.h5'
+        self.dis_savefilename = 'discriminator.h5'
         self.dropout = dropout
         self.relu_alpha = relu_alpha
         self.momentum = momentum
 
         #create models for convinience
         self.generator = self.generator_model()
+        self.generator.summary()
         self.discriminator = self.discriminator_model()
+        self.discriminator.summary()
         self.adversarial = self.adversarial_model()
 
         #compile models
         wasserstein_discriminator_loss = lambda true, pred: tf.abs(tf.mean(pred)-tf.mean(true))
         wasserstein_adversary_loss = lambda true, pred: tf.abs(tf.mean(pred))
-        self.discriminator.compile(loss='mean_absolute_error', optimizer=self.discriminator_opt)
-        self.adversarial.compile(loss=wasserstein_adversary_loss, optimizer=self.generator_opt)
+        self.discriminator.compile(loss='mean_absolute_error', optimizer=RMSprop(lr=0.00005))
+        self.adversarial.compile(loss=wasserstein_adversary_loss, optimizer=RMSprop(lr=0.00005, clipvalue=0.01))
