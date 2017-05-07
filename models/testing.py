@@ -10,8 +10,9 @@ from PIL import Image
 from keras import backend as K
 from keras.layers.merge import add
 import scipy
-from scipy.ndimage.filters import gaussian_filter
+#import matplotlib.pyplot as plt
 
+from scipy.ndimage.filters import gaussian_filter
 import numpy
 def bn_relu(input):
     norm = BatchNormalization(axis=3)(input)
@@ -35,11 +36,13 @@ def peak_signal_to_noise_ratio(true, predicted):
 
 file_path = 'C:/Users/xenyb/OneDrive/Documents/jpg/image_0072.jpg'
 file_path = 'C:/Users/Mike Wang/Downloads/faces/image_0446.jpg'
-file_path = 'C:/Users/Mike Wang/Downloads/Set14_SR/Set14/image_SRF_2/img_001_SRF_2_LR.png'
+#file_path = 'C:/Users/Mike Wang/Downloads/Set14_SR/Set14/image_SRF_2/img_001_SRF_2_LR.png'
 
 image = Image.open(file_path)
 image_array = numpy.array(image)
 image = scipy.ndimage.gaussian_filter(image_array, sigma = .5)
+#cv2.imshow('denoise',image)
+#plt.imshow(image)
 image = Image.fromarray(image)
 image = image.resize((64,64))
 intermediate_image = image.resize((256,256), Image.BICUBIC)
@@ -72,7 +75,7 @@ model = Model(init, out)
 model.compile(loss='mse',
               optimizer=keras.optimizers.Adadelta(),
               metrics=[peak_signal_to_noise_ratio])
-model.load_weights('models/trained_residual_model.h5')
+model.load_weights('trained_residual_model.h5')
 result = model.predict(X_list, batch_size = 1)
 result = result[0]
 est = numpy.array(intermediate_image)
@@ -84,6 +87,3 @@ result = numpy.clip(result, a_min=0, a_max=255)
 result = result.astype('uint8')
 image = Image.fromarray(result)
 image.show()
-
-
-

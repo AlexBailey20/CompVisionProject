@@ -15,6 +15,8 @@ def peak_signal_to_noise_ratio(true, predicted):
     return -10.0 * K.log(1.0 / (K.mean(K.square(predicted - true)))) / K.log(10.0)
 
 file_path = 'C:/Users/xenyb/OneDrive/Documents/faces/image_0120.jpg'
+file_path = 'C:/Users/Mike Wang/Downloads/Set14_SR/Set14/image_SRF_2/img_001_SRF_2_LR.png'
+
 image = Image.open(file_path)
 image_array = numpy.array(image)
 image = scipy.ndimage.gaussian_filter(image_array, sigma = .5)
