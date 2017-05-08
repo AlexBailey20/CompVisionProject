@@ -10,12 +10,16 @@ from keras import backend as K
 import scipy
 from scipy.ndimage.filters import gaussian_filter
 
+import sys
+from PIL import Image
+
 import numpy
 def peak_signal_to_noise_ratio(true, predicted):
     return -10.0 * K.log(1.0 / (K.mean(K.square(predicted - true)))) / K.log(10.0)
 
 file_path = 'C:/Users/xenyb/OneDrive/Documents/faces/image_0120.jpg'
 file_path = 'C:/Users/Mike Wang/Downloads/Set14_SR/Set14/image_SRF_2/img_001_SRF_2_LR.png'
+file_path = '/Users/ouchouyang/Downloads/faces/image_0120.jpg'
 
 image = Image.open(file_path)
 image_array = numpy.array(image)
@@ -46,6 +50,8 @@ result = result.astype('uint8')
 image = Image.fromarray(result)
 image.show()
 intermediate_image.show()
+image.save('image.bmp')
+intermediate_image.save('inter_image.bmp')
 
 
 

@@ -10,7 +10,7 @@ from PIL import Image
 from keras import backend as K
 from keras.layers.merge import add
 import scipy
-#import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 
 from scipy.ndimage.filters import gaussian_filter
 import numpy
@@ -42,7 +42,7 @@ image = Image.open(file_path)
 image_array = numpy.array(image)
 image = scipy.ndimage.gaussian_filter(image_array, sigma = .5)
 #cv2.imshow('denoise',image)
-#plt.imshow(image)
+plt.imshow(image)
 image = Image.fromarray(image)
 image = image.resize((64,64))
 intermediate_image = image.resize((256,256), Image.BICUBIC)
