@@ -19,12 +19,12 @@ def get_inputs(size_x=(256,256), size_y=(64,64), limit=None, resize=False):
         return np.array(image), np.array(image_lowres) if image_lowres is not None else None
     return zip(*map(process_img_file, files))
 
-def main(num_samples=None, epochs=None, skip=False, resume=False, limit=None):
+def main(num_samples=None, epochs=None, skip=False, resume=False, limit=None, summary=False, scale=256, layers=4):
     if skip:
-        model = GAN_Model()
+        model = GAN_Model(print_summary=summary, scale=scale, layers=layers)
     else:
-        images, _ = get_inputs(limit=limit)
-        model = GAN_Model(images)
+        images, _ = get_inputs(limit=limit, size_x=(scale, scale))
+        model = GAN_Model(images, print_summary=summary, scale=scale, layers=layers)
     if epochs is not None:
         model.train(epochs, resume)
     if num_samples is not None:
@@ -34,8 +34,12 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--summary", action="store_true")
+    parser.add_argument("--scale", type=int, default=256)
+    parser.add_argument("--filter", type=int, default=16)
+    parser.add_argument("--layers", type=int, default=4)
     parser.add_argument("-f", "--skipimages", action="store_true")
     parser.add_argument("-s", "--sample", type=int, default=None)
     parser.add_argument("-t", "--train", type=int, default=None)
     args = parser.parse_args()
-    main(num_samples=args.sample, limit=args.limit, epochs=args.train, skip=args.skipimages, resume=args.resume)
+    main(num_samples=args.sample, limit=args.limit, epochs=args.train, skip=args.skipimages, resume=args.resume, summary=args.summary, scale=args.scale, layers=args.layers)

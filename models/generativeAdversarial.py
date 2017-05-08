@@ -39,49 +39,48 @@ class model_guard(object):
     def __exit__(self, exc_type, exc_value, traceback):
         self.model.trainable = True
         for layer in self.model.layers:
-            layer.trainable = Truesad
+            layer.trainable = True
 class GAN_Model(object):
     #inspired mostly by https:/medium.com/towards-data-science/gan-by-example-using-keras-on-tensorflow-backend-1a6d515a60d0
-    def residual_block(self, conv_scale, conv_radius=6, relu=True, scale=2):
-        t = Sequential()
-        t.add(Conv2DTranspose(self.filter_dim * conv_scale, conv_radius, padding='same'))
-        t.add(BatchNormalization(momentum=self.momentum))
+    def add_residual_block_h(self, model, cnn_scale, radius=6, relu=True, scale=False, input_shape=None):
+        if input_shape is not None:
+            model.add(Conv2DTranspose(cnn_scale, radius, padding='same', input_shape=input_shape))
+        else:
+            model.add(Conv2DTranspose(cnn_scale, radius, padding='same'))
+        model.add(BatchNormalization(momentum=self.momentum))
+        if scale:
+            model.add(UpSampling2D(2))
         if relu:
-            t.add(Activation('relu'))
-        t.add(UpSampling2D(scale))
-        return t
-    def generator_model(self):
+            model.add(Activation('relu'))
+    def add_residual_block(self, model, conv_scale, final_dim=None):
+        self.add_residual_block_h(model, int(self.filter_dim/4*conv_scale), radius=1)
+        self.add_residual_block_h(model, int(self.filter_dim/4*conv_scale), radius=3)
+        if final_dim is None:
+            self.add_residual_block_h(model, self.filter_dim*conv_scale, radius=1, scale=True)
+        else:
+            self.add_residual_block_h(model, final_dim, relu=False, radius=1, scale=True)
+    def generator_model(self, num_layers=3):
         #Input: 64 floats
         #Output: 256x256x3 floats
         model = Sequential()
-        model.add(Reshape((8, 8, 1), input_shape=self.generator_input_shape))
-        model.add(BatchNormalization(momentum=self.momentum))
+        model.add(Reshape(self.random_shape, input_shape=self.generator_input_shape))
         model.add(Dropout(self.dropout))
-        model.add(UpSampling2D(2))
-        model.add(self.residual_block(1))
-        model.add(self.residual_block(2))
-        model.add(self.residual_block(4))
-        model.add(self.residual_block(8))
-        model.add(Conv2DTranspose(3, 3, padding='same'))
+        model.add(BatchNormalization(momentum=self.momentum))
+        for i, scale in [(i, 2**x) for (i, x) in enumerate(range(num_layers))]:
+            self.add_residual_block(model, scale, final_dim=3 if i==num_layers-1 else None)
         model.add(Activation('sigmoid'))
         return model
-
-    def discriminator_model(self):
+    def discriminator_model(self, num_layers=3):
         #Input: 256x256x3 floats
         #Output: {0,1}
         model = Sequential()
-        model.add(Conv2D(self.filter_dim*8, 4, padding='same', input_shape=self.discriminator_input_shape))
-        model.add(LeakyReLU(self.relu_alpha))
-        model.add(Dropout(self.dropout))
-        model.add(Conv2D(self.filter_dim*4, 6, strides=4, padding='same'))
-        model.add(LeakyReLU(self.relu_alpha))
-        model.add(Dropout(self.dropout))
-        model.add(Conv2D(self.filter_dim*2, 6, strides=4, padding='same'))
-        model.add(LeakyReLU(self.relu_alpha))
-        model.add(Dropout(self.dropout))
-        model.add(Conv2D(self.filter_dim, 6, strides=4, padding='same'))
-        model.add(LeakyReLU(self.relu_alpha))
-        model.add(Dropout(self.dropout))
+        for i, scale in [(i, 2**x) for (i, x) in enumerate(range(num_layers)[-1::-1])]:
+            if i==0:
+                model.add(Conv2D(self.filter_dim*scale, 7, padding='same', input_shape=self.discriminator_input_shape))
+            else:
+                model.add(Conv2D(self.filter_dim*scale, 8, strides=4, padding='same'))
+            model.add(LeakyReLU(self.relu_alpha))
+            model.add(Dropout(self.dropout))
         model.add(Flatten())
         model.add(Dense(1))
         return model
@@ -139,10 +138,11 @@ class GAN_Model(object):
                         with model_guard(self.discriminator):
                             g_loss = self.adversarial.train_on_batch(self.random_noise(), ones)
                         #print losses and save weights/images
-                        if b % 5 == 0:
+                        if b % 1 == 0:
                             batch_text = "Batch" if b==0 else ""
                             print("{}\t{}\t\t{}\t\t{}".format(batch_text, b, d_loss.history['loss'][-1], g_loss))
-                    save_generated_images(generated_images, title="epoch_{:02d}".format(e), limit=1)
+                        if b % 5 == 0:
+                            save_generated_images(generated_images, title="epoch_{:02d}_batch_{:02d}".format(e, b), limit=1)
             except KeyboardInterrupt:
                 print("\nUser stopped training.")
             finally:
@@ -167,8 +167,11 @@ class GAN_Model(object):
         save_generated_images(generated_images)
         print("Generated {} samples.".format(num_samples))
 
-    def __init__(self, images=None, batch_size=20, dropout=0.3, relu_alpha=0.15, momentum=0.9):
-        self.random_values = 64
+    def __init__(self, images=None, batch_size=30, dropout=0.33, relu_alpha=0.19, momentum=0.9, print_summary=False, scale=256, layers=4):
+        base_dim = int(scale/2**layers)
+        print(f"Using {base_dim} random values for generation.")
+        self.random_shape = (base_dim, base_dim, 1)
+        self.random_values = base_dim**2
         self.generator_input_shape = (self.random_values,)
         self.batch_size = batch_size
         self.noise_shape = (self.batch_size, self.random_values)
@@ -180,10 +183,11 @@ class GAN_Model(object):
             self.discriminator_input_shape = (self.images[0].shape)
         else:
             print("GAN initialized without loading images (-f), training unavailable.")
-            self.discriminator_input_shape = (256,256,3) #required for model specification
+            self.discriminator_input_shape = (scale,scale,3) #required for model specification
 
         #tunable model parameters
-        self.filter_dim = 16
+        self.filter_dim = 10
+        self.num_layers = layers
         self.gen_savefilename = 'generator.h5'
         self.dis_savefilename = 'discriminator.h5'
         self.dropout = dropout
@@ -191,14 +195,17 @@ class GAN_Model(object):
         self.momentum = momentum
 
         #create models for convinience
-        self.generator = self.generator_model()
-        self.generator.summary()
-        self.discriminator = self.discriminator_model()
-        self.discriminator.summary()
+        self.generator = self.generator_model(num_layers=self.num_layers)
+        self.discriminator = self.discriminator_model(num_layers=self.num_layers)
+        if print_summary:
+            self.generator.summary()
+            self.discriminator.summary()
         self.adversarial = self.adversarial_model()
 
         #compile models
-        wasserstein_discriminator_loss = lambda true, pred: tf.abs(tf.mean(pred)-tf.mean(true))
+        #wasserstein_discriminator_loss = lambda true, pred: tf.abs(tf.mean(pred)-tf.mean(true))
         wasserstein_adversary_loss = lambda true, pred: tf.abs(tf.mean(pred))
-        self.discriminator.compile(loss='mean_absolute_error', optimizer=RMSprop(lr=0.00005))
-        self.adversarial.compile(loss=wasserstein_adversary_loss, optimizer=RMSprop(lr=0.00005, clipvalue=0.01))
+        content_loss = 'mean_squared_error'
+        adversarial_loss = wasserstein_adversary_loss
+        self.discriminator.compile(loss=content_loss, optimizer=RMSprop(lr=0.00004))
+        self.adversarial.compile(loss=adversarial_loss, optimizer=RMSprop(lr=0.00003, clipvalue=0.017))
