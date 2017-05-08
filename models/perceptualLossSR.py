@@ -16,18 +16,21 @@ from keras.applications import vgg16
 import h5py
 
 def perceptual_loss(y_true, y_pred):
+    true_img = K.eval(y_true)              # convert tensors back to image to input to VGG
+    pred_img = K.eval(y_pred)
     vgg_model = vgg16.VGG16(include_top=False, weights='imagenet', input_shape = K.shape(y_true))
     second_pool = Model(inputs=vgg_model.input, outputs=vgg_model.layers[6].output)
     fifth_pool = Model(inputs=vgg_model.input, outputs=vgg_model.layers[18].output)
 
-    twotrue = second_pool.predict(y_true)
-    twopred = second_pool.predict(y_pred)
-    fivetrue = fifth_pool.predict(y_true)
-    fivepred = fifth_pool.predict(y_pred)
+    twotrue = second_pool.predict(true_img)
+    twopred = second_pool.predict(pred_img)
+    fivetrue = fifth_pool.predict(true_img)
+    fivepred = fifth_pool.predict(pred_img)
     size = K.shape(twotrue)[1]
 
     loss = K.mean(K.sum(K.square(twotrue - twopred))) / (size * size)
     loss += K.mean(K.sum(K.square(fivetrue - fivepred))) / (size * size)
+    loss /= 2.
     return loss
 
 def get_inputs():
