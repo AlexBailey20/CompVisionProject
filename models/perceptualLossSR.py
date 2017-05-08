@@ -17,17 +17,17 @@ import h5py
 
 def perceptual_loss(y_true, y_pred):
     vgg_model = vgg16.VGG16(include_top=False, weights='imagenet', input_shape = K.shape(y_true))
-    2nd_pool = Model(inputs=vgg_model.input, outputs=vgg_model.layers[6].output)
-    5th_pool = Model(inputs=vgg_model.input, outputs=vgg_model.layers[18].output)
+    second_pool = Model(inputs=vgg_model.input, outputs=vgg_model.layers[6].output)
+    fifth_pool = Model(inputs=vgg_model.input, outputs=vgg_model.layers[18].output)
 
-    2true = 2nd_pool.predict(y_true)
-    2pred = 2nd_pool.predict(y_pred)
-    5true = 5th_pool.predict(y_true)
-    5pred = 5th_pool.predict(y_pred)
-    size = K.shape(2true)[1]
+    twotrue = second_pool.predict(y_true)
+    twopred = second_pool.predict(y_pred)
+    fivetrue = fifth_pool.predict(y_true)
+    fivepred = fifth_pool.predict(y_pred)
+    size = K.shape(twotrue)[1]
 
-    loss = K.mean(K.sum(K.square(2true - 2pred))) / (size * size)
-    loss += K.mean(K.sum(K.square(5true - 5pred))) / (size * size)
+    loss = K.mean(K.sum(K.square(twotrue - twopred))) / (size * size)
+    loss += K.mean(K.sum(K.square(fivetrue - fivepred))) / (size * size)
     return loss
 
 def get_inputs():
@@ -89,7 +89,7 @@ out = Conv2D(64,(3,3),activation='relu', padding='same')(out)
 out = Conv2D(64,(3,3),activation='relu', padding='same')(out)
 out = Conv2D(3,(3,3), padding='same')(out)
 model = Model(init, out)
-model.compile(loss='perceptual_loss',
+model.compile(loss=perceptual_loss,
               optimizer=keras.optimizers.Adadelta())
 model.fit(x=X_train, y = Y_train, batch_size=10, epochs=10, verbose=1)
 model.save('perceptual_loss_model.h5')
