@@ -39,10 +39,17 @@ class model_guard(object):
     def __exit__(self, exc_type, exc_value, traceback):
         self.model.trainable = True
         for layer in self.model.layers:
-            layer.trainable = True
-
+            layer.trainable = Truesad
 class GAN_Model(object):
-    #inspired mostly by https://medium.com/towards-data-science/gan-by-example-using-keras-on-tensorflow-backend-1a6d515a60d0
+    #inspired mostly by https:/medium.com/towards-data-science/gan-by-example-using-keras-on-tensorflow-backend-1a6d515a60d0
+    def residual_block(self, conv_scale, conv_radius=6, relu=True, scale=2):
+        t = Sequential()
+        t.add(Conv2DTranspose(self.filter_dim * conv_scale, conv_radius, padding='same'))
+        t.add(BatchNormalization(momentum=self.momentum))
+        if relu:
+            t.add(Activation('relu'))
+        t.add(UpSampling2D(scale))
+        return t
     def generator_model(self):
         #Input: 64 floats
         #Output: 256x256x3 floats
@@ -51,22 +58,10 @@ class GAN_Model(object):
         model.add(BatchNormalization(momentum=self.momentum))
         model.add(Dropout(self.dropout))
         model.add(UpSampling2D(2))
-        model.add(Conv2DTranspose(self.filter_dim, 6, padding='same'))
-        model.add(BatchNormalization(momentum=self.momentum))
-        model.add(Activation('relu'))
-        model.add(UpSampling2D(2))
-        model.add(Conv2DTranspose(self.filter_dim*2, 6, padding='same'))
-        model.add(BatchNormalization(momentum=self.momentum))
-        model.add(Activation('relu'))
-        model.add(UpSampling2D(2))
-        model.add(Conv2DTranspose(self.filter_dim*4, 6, padding='same'))
-        model.add(BatchNormalization(momentum=self.momentum))
-        model.add(Activation('relu'))
-        model.add(UpSampling2D(2))
-        model.add(Conv2DTranspose(self.filter_dim*8, 6, padding='same'))
-        model.add(BatchNormalization(momentum=self.momentum))
-        model.add(Activation('relu'))
-        model.add(UpSampling2D(2))
+        model.add(self.residual_block(1))
+        model.add(self.residual_block(2))
+        model.add(self.residual_block(4))
+        model.add(self.residual_block(8))
         model.add(Conv2DTranspose(3, 3, padding='same'))
         model.add(Activation('sigmoid'))
         return model
